@@ -1,0 +1,49 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "net.dawson.adorablehamsterpets.mixin",
+  "compatibilityLevel": "JAVA_25",
+  "mixins": [
+    "server.RavagerEntityMixin",
+    "server.SpiderEntityMixin",
+    "server.PlayerEntityMixin",
+    "server.CreeperEntityMixin",
+    "server.SweetBerryBushBlockMixin",
+    "server.PiglinBrainMixin",
+    "server.EndPortalBlockMixin",
+    "server.MobEntityMixin",
+    "accessor.SlotAccessor",
+    "accessor.MeleeAttackGoalAccessor",
+    "accessor.LookAtEntityGoalAccessor",
+    "accessor.LookAroundGoalAccessor",
+    "accessor.FollowOwnerGoalAccessor",
+    "accessor.ValidatedFieldAccessor",
+    "accessor.LivingEntityInvoker",
+    "accessor.BookContentsBuilderAccessor"
+  ],
+  "client": [
+    "client.AbstractClientPlayerEntityMixin",
+    "client.TitleScreenMixin",
+    "client.BlockEntityRenderDispatcherMixin",
+    "client.EntityRenderDispatcherMixin",
+    "client.EntityRendererRidingTagMixin",
+    "client.HeldItemRendererMixin",
+    "client.HeldItemFeatureRendererMixin",
+    "client.accessor.HandledScreenAccessor",
+    "accessor.ScreenWidgetAdder",
+    "client.accessor.InGameHudAccessor",
+    "client.InGameHudMixin",
+    "client.GuiBookLandingMixin",
+    "client.GuiButtonEntryMixin",
+    "client.GuiBookEntryListMixin",
+    "client.BookContentsMixin",
+    "client.BookContentsBuilderMixin",
+    "client.GuiButtonBookMarkReadMixin",
+    "client.GuiBookIndexMixin",
+    "client.accessor.GuiBookAccessor",
+    "client.accessor.GuiButtonEntryAccessor"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

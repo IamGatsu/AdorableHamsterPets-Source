@@ -1,55 +1,84 @@
 plugins {
-    id "architectury-plugin" version "3.4.161"
-    id "dev.architectury.loom" version "1.9-SNAPSHOT" apply false
+    id "net.fabricmc.fabric-loom" version "${loom_version}"
 }
 
-architectury {
-    minecraft = rootProject.minecraft_version
+version = "${project.mod_version}+${project.minecraft_version}-fabric"
+group = project.maven_group
+
+base {
+    archivesName = project.archives_base_name
 }
 
-subprojects {
-    apply plugin: "dev.architectury.loom"
+repositories {
+    maven { name = "Architectury"; url = "https://maven.architectury.dev/" }
+    maven { name = "TerraformersMC"; url = "https://maven.terraformersmc.com/" }
+    maven { name = "FzzyMaven"; url = "https://maven.fzzyhmstrs.me/" }
+    maven { name = "GeckoLib"; url = "https://dl.cloudsmith.io/public/geckolib3/geckolib/maven/" }
+    exclusiveContent {
+        forRepository { maven { name = "Modrinth"; url = "https://api.modrinth.com/maven" } }
+        filter { includeGroup "maven.modrinth" }
+    }
+}
 
-    dependencies {
-        minecraft "com.mojang:minecraft:${rootProject.minecraft_version}"
-        mappings loom.layered {
-            it.mappings "net.fabricmc:yarn:${project.yarn_mappings}:v2"
-            it.mappings "dev.architectury:yarn-mappings-patch-neoforge:${project.neoforge_yarn_patch}"
+fabricApi {
+    configureDataGeneration {
+        client = true
+    }
+}
+
+dependencies {
+    // Minecraft 26.2 ships unobfuscated with Mojang names, so no "mappings" line and no "mod*" configurations.
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+
+    implementation "net.fabricmc:fabric-loader:${project.fabric_loader_version}"
+    implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+
+    implementation "dev.architectury:architectury-fabric:${project.architectury_api_version}"
+    implementation "com.geckolib:geckolib-fabric-${project.minecraft_version}:${project.geckolib_version}"
+    implementation "me.fzzyhmstrs:fzzy_config:${project.fzzy_config_version}"
+    runtimeOnly "maven.modrinth:fabric-language-kotlin:${project.flk_version}"
+
+    // Patchouli 26.2 (self-built port): put the jar into AHP/libs/ (see PORTING_NOTES_26.2.md)
+    implementation fileTree(dir: "libs", include: ["patchouli-*.jar"])
+
+    compileOnly "com.terraformersmc:modmenu:${project.modmenu_version}"
+    runtimeOnly "com.terraformersmc:modmenu:${project.modmenu_version}"
+    compileOnly "maven.modrinth:jade:${project.jade_version}+fabric"
+}
+
+processResources {
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    inputs.property "version", project.version
+    filesMatching("fabric.mod.json") {
+        expand "version": project.version
+    }
+}
+
+sourceSets {
+    main {
+        resources {
+            srcDir file("src/main/generated")
+            exclude(".cache/**")
         }
     }
 }
 
-allprojects {
-    apply plugin: "java"
-    apply plugin: "architectury-plugin"
+// Generated datagen output and static resources can overlap (e.g. vanilla tag additions): keep the first copy
+tasks.withType(Jar).configureEach {
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
 
-    base {
-        archivesName = rootProject.archives_base_name
-    }
+tasks.withType(JavaCompile).configureEach {
+    it.options.encoding = "UTF-8"
+    it.options.release = 25
+}
 
-    version = "${rootProject.mod_version}-${rootProject.minecraft_version}+${project.name}"
-    group = rootProject.maven_group
+java {
+    withSourcesJar()
+    sourceCompatibility = JavaVersion.VERSION_25
+    targetCompatibility = JavaVersion.VERSION_25
+}
 
-    repositories {
-        maven { name = "TerraformersMC"; url = "https://maven.terraformersmc.com/" }
-        maven { name = "FzzyMaven"; url = "https://maven.fzzyhmstrs.me/" }
-        maven { name = "CurseMaven"; url = "https://cursemaven.com" }
-        maven { name = "Modrinth"; url = "https://api.modrinth.com/maven" }
-        maven { name = "GeckoLib"; url = 'https://dl.cloudsmith.io/public/geckolib3/geckolib/maven/' }
-        maven { name = "Patchouli"; url = 'https://maven.blamejared.com' }
-        maven { name = "WispForest"; url = "https://maven.wispforest.io/releases" }
-        maven { name = "Su5ed"; url = "https://maven.su5ed.dev/releases" }
-        maven { name = "Ladysnake"; url = "https://maven.ladysnake.org/releases" }
-        maven { name = "IllusiveSoulworks"; url = "https://maven.theillusivec4.top" }
-    }
-
-    tasks.withType(JavaCompile).configureEach {
-        it.options.encoding = "UTF-8"
-        it.options.release = 21
-        it.options.compilerArgs.add("-Xlint:unchecked")
-    }
-
-    java {
-        withSourcesJar()
-    }
+jar {
+    from("LICENSE.txt") { rename { "${it}_${project.base.archivesName.get()}" } }
 }

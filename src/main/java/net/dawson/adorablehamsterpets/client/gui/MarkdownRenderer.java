@@ -1,0 +1,283 @@
+package net.dawson.adorablehamsterpets.client.gui;
+import net.minecraft.network.chat.ClickEvent;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.MutableComponent;
+import net.minecraft.network.chat.Style;
+import net.minecraft.util.FormattedCharSequence;
+
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.Font;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
+import com.mojang.blaze3d.vertex.PoseStack;
+import net.minecraft.ChatFormatting;
+import net.minecraft.resources.Identifier;
+import org.jetbrains.annotations.Nullable;
+
+import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+public class MarkdownRenderer {
+    // --- 1. Constants and Patterns ---
+    private static final Pattern BOLD_PATTERN = Pattern.compile("\\*\\*(.*?)\\*\\*");
+    private static final Pattern ITALIC_PATTERN = Pattern.compile("\\*(.*?)\\*");
+    private static final Pattern STRIKETHROUGH_PATTERN = Pattern.compile("~~(.*?)~~");
+    private static final Pattern CODE_PATTERN = Pattern.compile("`(.*?)`");
+    private static final Pattern LINK_PATTERN = Pattern.compile("\\[(.*?)]\\((.*?)\\)");
+    public static final int LINE_SPACING = 2;
+    public static final int HEADING_BOTTOM_MARGIN = 4;
+    public static final int DIVIDER_HEIGHT = 13;
+    public static final int LIST_INDENT = 10;
+    public static final int SPACES_PER_INDENT_LEVEL = 4;
+
+    // --- 2. Fields ---
+    private final Font font;
+    public final List<String> lines;
+    private final int x;
+    private final int startY;
+    public final int width;
+    private int totalHeight = 0;
+
+    // --- 3. Constructor ---
+    public MarkdownRenderer(String markdownContent, int x, int startY, int width) {
+        this.font = Minecraft.getInstance().font;
+        this.lines = markdownContent == null ? List.of() : List.of(markdownContent.split("\n"));
+        this.x = x;
+        this.startY = startY;
+        this.width = width;
+        // Pass the content width to the height calculation
+        this.calculateHeight(width);
+    }
+
+    // --- 4. Public Methods ---
+    public void render(GuiGraphicsExtractor context, int scrollY, @Nullable Style hoveredStyle) {
+        int currentY = startY - scrollY;
+
+        for (String originalLine : lines) {
+            String trimmedLine = originalLine.trim();
+            if (trimmedLine.isEmpty()) {
+                currentY += font.lineHeight / 2;
+                continue;
+            }
+
+            if (trimmedLine.startsWith("#")) {
+                currentY = renderHeading(context, trimmedLine, currentY);
+            } else if (trimmedLine.equals("---")) {
+                currentY = renderDivider(context, currentY);
+            } else if (trimmedLine.startsWith("- ") || trimmedLine.startsWith("* ") || (trimmedLine.matches("^\\d+\\.\\s.*"))) {
+                currentY = renderListItem(context, originalLine, currentY, hoveredStyle);
+            } else {
+                currentY = renderParagraph(context, trimmedLine, currentY, x, width, hoveredStyle);
+            }
+        }
+    }
+
+    public int getTotalHeight() {
+        return totalHeight;
+    }
+
+    // --- 5. Public Static Helpers ---
+    public static int getIndentationLevel(String line) {
+        int spaces = 0;
+        for (char c : line.toCharArray()) {
+            if (c == ' ') {
+                spaces++;
+            } else {
+                break;
+            }
+        }
+        return spaces / SPACES_PER_INDENT_LEVEL;
+    }
+
+    // --- 6. Private Rendering Helpers ---
+    private int renderHeading(GuiGraphicsExtractor context, String line, int y) {
+        int level = 0;
+        while (level < line.length() && line.charAt(level) == '#') {
+            level++;
+        }
+        String text = line.substring(level).trim();
+        float scale = Math.max(1.0f, 2.0f - (level - 1) * 0.25f);
+        int color = 0x323232;
+
+        // Create a styled, bold text object for the heading
+        MutableComponent styledText = Component.literal(text).setStyle(Style.EMPTY.withBold(true));
+
+        // The available width for the text must be scaled down to account for the scaled-up rendering
+        int scaledWidth = (int) (this.width / scale);
+        List<FormattedCharSequence> wrappedLines = this.font.split(styledText, scaledWidth);
+
+        org.joml.Matrix3x2fStack matrices = context.pose();
+        for (FormattedCharSequence wrappedLine : wrappedLines) {
+            matrices.pushMatrix();
+            matrices.translate((float) (x), (float) (y));
+            matrices.scale(scale, scale);
+            context.text(font, wrappedLine, 0, 0, color, false);
+            matrices.popMatrix();
+            y += (int)(font.lineHeight * scale) + LINE_SPACING;
+        }
+
+        // Adjust Y position: remove the last line's spacing and add the final margin
+        return y - LINE_SPACING + HEADING_BOTTOM_MARGIN;
+    }
+
+    private int renderDivider(GuiGraphicsExtractor context, int y) {
+        // Draw the divider 3 pixels down from the start, leaving 3px padding above.
+        context.fill(x + 15, y + 3, x + width - 15, y + 4, 0xFFB3B3B3); // First two digits control the alpha.
+        return y + DIVIDER_HEIGHT;
+    }
+
+    private int renderListItem(GuiGraphicsExtractor context, String line, int y, @Nullable Style hoveredStyle) {
+        int indentationLevel = getIndentationLevel(line);
+        String trimmedLine = line.trim();
+
+        String bullet;
+        String content;
+
+        if (trimmedLine.matches("^\\d+\\.\\s.*")) {
+            int dotIndex = trimmedLine.indexOf('.');
+            bullet = trimmedLine.substring(0, dotIndex + 1);
+            content = trimmedLine.substring(dotIndex + 1).trim();
+        } else {
+            bullet = "•";
+            content = trimmedLine.substring(1).trim();
+        }
+
+        int bulletX = x + (indentationLevel * LIST_INDENT);
+        int contentX = bulletX + LIST_INDENT;
+        int contentWidth = width - ((indentationLevel + 1) * LIST_INDENT);
+
+        context.text(font, bullet, bulletX, y, 0xFF323232, false);
+        return renderParagraph(context, content, y, contentX, contentWidth, hoveredStyle);
+    }
+
+    private int renderParagraph(GuiGraphicsExtractor context, String line, int y, int startX, int lineWidth, @Nullable Style hoveredStyle) {
+        int indentationLevel = getIndentationLevel(line);
+        String content = line.substring(indentationLevel * SPACES_PER_INDENT_LEVEL);
+        int finalStartX = startX + (indentationLevel * LIST_INDENT);
+        int finalLineWidth = lineWidth - (indentationLevel * LIST_INDENT);
+
+        MutableComponent styledText = parseLineToText(content, hoveredStyle);
+        List<FormattedCharSequence> wrappedLines = font.split(styledText, finalLineWidth);
+
+        for (FormattedCharSequence wrappedLine : wrappedLines) {
+            context.text(font, wrappedLine, finalStartX, y, 0xFF323232, false);
+            y += font.lineHeight + LINE_SPACING;
+        }
+        return y;
+    }
+
+    // --- 7. Parsing Logic ---
+    public MutableComponent parseLineToText(String line, @Nullable Style hoveredStyle) {
+        MutableComponent result = Component.empty();
+        String remaining = line;
+
+        while (!remaining.isEmpty()) {
+            Matcher boldMatcher = BOLD_PATTERN.matcher(remaining);
+            Matcher italicMatcher = ITALIC_PATTERN.matcher(remaining);
+            Matcher strikethroughMatcher = STRIKETHROUGH_PATTERN.matcher(remaining);
+            Matcher codeMatcher = CODE_PATTERN.matcher(remaining);
+            Matcher linkMatcher = LINK_PATTERN.matcher(remaining);
+
+            int nextMatchPos = Integer.MAX_VALUE;
+            Matcher nextMatcher = null;
+
+            if (boldMatcher.find(0) && boldMatcher.start() < nextMatchPos) { nextMatchPos = boldMatcher.start(); nextMatcher = boldMatcher; }
+            if (italicMatcher.find(0) && italicMatcher.start() < nextMatchPos) { nextMatchPos = italicMatcher.start(); nextMatcher = italicMatcher; }
+            if (strikethroughMatcher.find(0) && strikethroughMatcher.start() < nextMatchPos) { nextMatchPos = strikethroughMatcher.start(); nextMatcher = strikethroughMatcher; }
+            if (codeMatcher.find(0) && codeMatcher.start() < nextMatchPos) { nextMatchPos = codeMatcher.start(); nextMatcher = codeMatcher; }
+            if (linkMatcher.find(0) && linkMatcher.start() < nextMatchPos) { nextMatchPos = linkMatcher.start(); nextMatcher = linkMatcher; }
+
+            if (nextMatcher != null) {
+                if (nextMatchPos > 0) {
+                    result.append(Component.literal(remaining.substring(0, nextMatchPos)));
+                }
+
+                if (nextMatcher == boldMatcher) {
+                    result.append(Component.literal(boldMatcher.group(1)).setStyle(Style.EMPTY.withBold(true)));
+                } else if (nextMatcher == italicMatcher) {
+                    result.append(Component.literal(italicMatcher.group(1)).setStyle(Style.EMPTY.withItalic(true)));
+                } else if (nextMatcher == strikethroughMatcher) {
+                    result.append(Component.literal(strikethroughMatcher.group(1)).setStyle(Style.EMPTY.withStrikethrough(true)));
+                } else if (nextMatcher == codeMatcher) {
+                    result.append(Component.literal(codeMatcher.group(1)).setStyle(Style.EMPTY.withFont(new net.minecraft.network.chat.FontDescription.Resource(Identifier.fromNamespaceAndPath("minecraft", "uniform"))).withColor(ChatFormatting.BLACK)));
+                } else if (nextMatcher == linkMatcher) {
+                    String linkText = linkMatcher.group(1);
+                    String url = linkMatcher.group(2);
+                    ClickEvent clickEvent;
+
+                    if (url.startsWith("ahp://copy ")) {
+                        String command = url.substring("ahp://copy ".length());
+                        clickEvent = new ClickEvent.CopyToClipboard(command);
+                    } else {
+                        // Default to OPEN_URL for https or any other scheme
+                        clickEvent = new ClickEvent.OpenUrl(java.net.URI.create(url));
+                    }
+
+                    // Hover logic
+                    Style linkStyle = Style.EMPTY.withColor(ChatFormatting.AQUA).withUnderlined(true).withBold(true).withClickEvent(clickEvent);
+                    if (hoveredStyle != null && hoveredStyle.getClickEvent() != null && hoveredStyle.getClickEvent().equals(clickEvent)) {
+                        // Hover style: Gold, with no underline.
+                        linkStyle = linkStyle.withColor(ChatFormatting.GOLD).withUnderlined(false).withBold(true);
+                    }
+                    result.append(Component.literal(linkText).setStyle(linkStyle));
+                }
+                remaining = remaining.substring(nextMatcher.end());
+            } else {
+                result.append(Component.literal(remaining));
+                break;
+            }
+        }
+        return result;
+    }
+
+    private void calculateHeight(int lineWidth) {
+        int currentY = 0;
+        for (String line : lines) {
+            String trimmedLine = line.trim(); // Trim first to identify element type
+            if (trimmedLine.isEmpty()) {
+                currentY += font.lineHeight / 2;
+                continue;
+            }
+
+            if (trimmedLine.startsWith("#")) {
+                int level = 0;
+                while (level < trimmedLine.length() && trimmedLine.charAt(level) == '#') level++;
+                String text = trimmedLine.substring(level).trim();
+                float scale = Math.max(1.0f, 2.0f - (level - 1) * 0.25f);
+
+                int scaledWidth = (int) (lineWidth / scale);
+                MutableComponent styledText = Component.literal(text).setStyle(Style.EMPTY.withBold(true));
+                int wrappedLinesCount = this.font.split(styledText, scaledWidth).size();
+
+                int heightOfLines = wrappedLinesCount * (int)(font.lineHeight * scale);
+                int totalSpacing = Math.max(0, wrappedLinesCount - 1) * LINE_SPACING;
+                currentY += heightOfLines + totalSpacing + HEADING_BOTTOM_MARGIN;
+            } else if (trimmedLine.equals("---")) {
+                currentY += DIVIDER_HEIGHT;
+            } else {
+                int indentationLevel = getIndentationLevel(line); // Use original line for indent
+                String content = trimmedLine;
+                int contentWidth;
+
+                // Check if it's a list item and adjust content/width accordingly.
+                if (content.startsWith("- ") || content.startsWith("* ") || content.matches("^\\d+\\.\\s.*")) {
+                    contentWidth = lineWidth - ((indentationLevel + 1) * LIST_INDENT);
+                    if (content.matches("^\\d+\\.\\s.*")) {
+                        content = content.substring(content.indexOf('.') + 1).trim();
+                    } else {
+                        // Handles both "- " and "* "
+                        content = content.substring(1).trim();
+                    }
+                } else {
+                    // It's a paragraph, adjust width for its indentation level.
+                    contentWidth = lineWidth - (indentationLevel * LIST_INDENT);
+                }
+
+                MutableComponent styledText = parseLineToText(content, null);
+                int wrappedLinesCount = font.split(styledText, contentWidth).size();
+                currentY += wrappedLinesCount * (font.lineHeight + LINE_SPACING);
+            }
+        }
+        this.totalHeight = currentY;
+    }
+}

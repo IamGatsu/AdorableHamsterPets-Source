@@ -1,0 +1,387 @@
+package net.dawson.adorablehamsterpets.entity.custom;
+
+import net.dawson.adorablehamsterpets.AdorableHamsterPets;
+import net.dawson.adorablehamsterpets.advancement.criterion.ModCriteria;
+import net.dawson.adorablehamsterpets.config.ConfigDataCache;
+import net.dawson.adorablehamsterpets.config.Configs;
+import net.dawson.adorablehamsterpets.entity.ModEntities;
+import net.dawson.adorablehamsterpets.flute.AcornMusicDiscRewardPolicy;
+import net.dawson.adorablehamsterpets.flute.FlutePerformanceManager;
+import net.dawson.adorablehamsterpets.item.ModItems;
+import net.dawson.adorablehamsterpets.sound.ModSounds;
+import net.dawson.adorablehamsterpets.util.HamsterNbtUtil;
+import net.dawson.adorablehamsterpets.util.HamsterPhysicsUtil;
+import net.dawson.adorablehamsterpets.util.ParticleEffectsUtil;
+import net.dawson.adorablehamsterpets.util.TreeHeistUtil;
+import net.fabricmc.api.EnvType;
+import net.fabricmc.api.Environment;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.damagesource.DamageSource;
+import net.minecraft.network.syncher.SynchedEntityData;
+import net.minecraft.network.syncher.EntityDataAccessor;
+import net.minecraft.network.syncher.EntityDataSerializers;
+import net.minecraft.world.entity.decoration.ArmorStand;
+import net.minecraft.world.effect.MobEffectInstance;
+import net.minecraft.world.effect.MobEffects;
+import net.minecraft.world.entity.monster.Creeper;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.entity.projectile.ThrowableProjectile;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.core.particles.ParticleTypes;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.sounds.SoundEvent;
+import net.minecraft.sounds.SoundEvents;
+import net.minecraft.network.chat.Component;
+import net.minecraft.ChatFormatting;
+import net.minecraft.world.Containers;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.EntityHitResult;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.level.Level;
+
+import java.util.UUID;
+
+/**
+ * A standard thrown entity wrapper for hamsters.
+ * Acts as a compatibility layer for any mods that interact with projectiles.
+ */
+public class HamsterProjectileEntity extends ThrowableProjectile {
+
+    /* ──────────────────────────────────────────────────────────────────────────────
+     *        Constants and Static Utilities
+     * ────────────────────────────────────────────────────────────────────────────*/
+
+    public static final EntityDataAccessor<CompoundTag> HAMSTER_DATA = SynchedEntityData.defineId(HamsterProjectileEntity.class, net.dawson.adorablehamsterpets.entity.ModEntityDataSerializers.COMPOUND_TAG);
+
+    /* ──────────────────────────────────────────────────────────────────────────────
+     *        Instance Fields
+     * ────────────────────────────────────────────────────────────────────────────*/
+
+    private boolean hasPlayedIncomingSound = false;
+
+    public HamsterEntity clientDummyHamster;
+
+    /* ──────────────────────────────────────────────────────────────────────────────
+     *        Constructors
+     * ────────────────────────────────────────────────────────────────────────────*/
+
+    public HamsterProjectileEntity(EntityType<? extends ThrowableProjectile> entityType, Level world) {
+        super(entityType, world);
+    }
+
+    public HamsterProjectileEntity(Level world, LivingEntity owner) {
+        super(ModEntities.HAMSTER_PROJECTILE.get(), owner.getX(), owner.getEyeY() - 0.1F, owner.getZ(), world);
+        this.setOwner(owner);
+    }
+
+    /* ──────────────────────────────────────────────────────────────────────────────
+     *        Lifecycle Hooks
+     * ────────────────────────────────────────────────────────────────────────────*/
+
+    @Override
+    public void tick() {
+        // --- Custom Collision Check ---
+        // Used for non-solid heistable blocks (e.g. Dynamic Trees mod)
+        if (!this.level().isClientSide()) {
+            BlockHitResult bhr = TreeHeistUtil.checkNonSolidCollision(this);
+
+            if (bhr != null) {
+                this.onHit(bhr);
+                return; // Stop tick, entity is discarded in onCollision
+            }
+        }
+
+        super.tick();
+
+        // Simulate trajectory to play warning sound
+        if (!this.level().isClientSide() && !this.hasPlayedIncomingSound && this.tickCount > 1) {
+            HamsterPhysicsUtil.simulateTrajectoryAndCheckSound(this);
+        }
+
+        // --- Particle Trail Logic ---
+        if (!this.level().isClientSide()) {
+            boolean isBuffed = false;
+            CompoundTag nbt = this.getHamsterData();
+            if (!nbt.isEmpty() && nbt.contains("greenBeanBuffData")) {
+                CompoundTag buffData = nbt.getCompoundOrEmpty("greenBeanBuffData");
+                isBuffed = buffData.getLongOr("greenBeanBuffDuration", 0L) > this.level().getGameTime();
+            }
+
+            int particleDelay = isBuffed ? 3 : 5;
+
+            if (this.tickCount > particleDelay) {
+                Vec3 currentVelocity = this.getDeltaMovement();
+                double offsetMultiplier = 1.5;
+                double spawnX = this.xo - (currentVelocity.x * offsetMultiplier);
+                double spawnY = this.yo + (this.getBbHeight() / 2.0) - (currentVelocity.y * offsetMultiplier);
+                double spawnZ = this.zo - (currentVelocity.z * offsetMultiplier);
+
+                ParticleEffectsUtil.sendParticles(
+                        this.level(),
+                        new Vec3(spawnX, spawnY, spawnZ),
+                        ParticleTypes.GUST,
+                        1,
+                        new Vec3(0.1, 0.1, 0.1),
+                        0.0
+                );
+            }
+        }
+
+        // Failsafe
+        if (!this.level().isClientSide() && this.getHamsterData().isEmpty()) {
+            this.discard();
+        }
+    }
+
+    /* ──────────────────────────────────────────────────────────────────────────────
+     *        Public API Methods
+     * ────────────────────────────────────────────────────────────────────────────*/
+
+    public void setHamsterData(CompoundTag nbt) {
+        this.entityData.set(HAMSTER_DATA, nbt);
+    }
+
+    public CompoundTag getHamsterData() {
+        return this.entityData.get(HAMSTER_DATA);
+    }
+
+    public void setHasPlayedIncomingSound(boolean val) {
+        this.hasPlayedIncomingSound = val;
+    }
+
+    public boolean hasPlayedIncomingSound() {
+        return this.hasPlayedIncomingSound;
+    }
+
+    public boolean isHitTargetValid(Entity entity) {
+        return this.canHitEntity(entity);
+    }
+
+    @Override
+    public void addAdditionalSaveData(net.minecraft.world.level.storage.ValueOutput nbt) {
+        super.addAdditionalSaveData(nbt);
+        nbt.store("HamsterData", CompoundTag.CODEC, this.getHamsterData());
+        nbt.putBoolean("HasPlayedIncomingSound", this.hasPlayedIncomingSound);
+    }
+
+    @Override
+    public void readAdditionalSaveData(net.minecraft.world.level.storage.ValueInput nbt) {
+        super.readAdditionalSaveData(nbt);
+        nbt.read("HamsterData", CompoundTag.CODEC).ifPresent(this::setHamsterData);
+        this.hasPlayedIncomingSound = nbt.getBooleanOr("HasPlayedIncomingSound", false);
+    }
+
+    /* ──────────────────────────────────────────────────────────────────────────────
+     *        Overrides
+     * ────────────────────────────────────────────────────────────────────────────*/
+
+    @Override
+    protected void defineSynchedData(SynchedEntityData.Builder builder) {
+        builder.define(HAMSTER_DATA, new CompoundTag());
+    }
+
+    @Override
+    protected double getDefaultGravity() {
+        return AdorableHamsterPets.MAIN_CONFIG.hamsterThrowGravity.get();
+    }
+
+    @Override
+    protected boolean canHitEntity(Entity entity) {
+        if (entity == this) {
+            return false;
+        }
+
+        if (entity instanceof ArmorStand) {
+            return !entity.isSpectator();
+        }
+
+        Entity owner = this.getOwner();
+        if (owner != null) {
+            if (!Configs.AHP_MAIN.yeetFriendlyFire) {
+                return false;
+            }
+        }
+
+        return super.canHitEntity(entity);
+    }
+
+    @Override
+    protected void onHitEntity(EntityHitResult entityHitResult) {
+        super.onHitEntity(entityHitResult);
+        if (this.level().isClientSide()) return;
+
+        Entity hitEntity = entityHitResult.getEntity();
+        CompoundTag hamsterNbt = this.getHamsterData();
+
+        // Safety check
+        Player ownerPlayer = this.getOwner() instanceof Player p ? p : null;
+
+        if (!hamsterNbt.isEmpty()) {
+            HamsterEntity hamster = HamsterNbtUtil.createFromNbt((ServerLevel) this.level(), ownerPlayer, hamsterNbt);
+            if (hamster != null) {
+                boolean playEffects = false;
+                SoundEvent impactSound = SoundEvents.GENERIC_SMALL_FALL; // Fallback
+
+                // Create DamageSource where thrown hamster is attacker
+                DamageSource damageSource = hamster.damageSources().mobAttack(hamster);
+
+                if (hitEntity instanceof ArmorStand) {
+                    playEffects = true;
+                    impactSound = ModSounds.getDynamicEntitySound(hitEntity, false, damageSource);
+                } else if (hitEntity instanceof LivingEntity livingHit && this.getOwner() != null) {
+
+                    float damageAmount = HamsterPhysicsUtil.calculateThrowDamage(hamster, hamster.getArmorStack());
+                    boolean damaged = (this.level() instanceof net.minecraft.server.level.ServerLevel hitLevel && livingHit.hurtServer(hitLevel, damageSource, damageAmount)); // Hamster is damage source
+
+                    if (damaged) {
+                        boolean isDeath = livingHit.isDeadOrDying() || livingHit.getHealth() <= 0.0f;
+                        impactSound = ModSounds.getDynamicEntitySound(hitEntity, isDeath, damageSource);
+
+                        // Music Disc Drop Logic
+                        // Charged creeper deaths drop Cheese unless every ritual condition passes
+                        if (isDeath && livingHit instanceof Creeper creeper) {
+                            UUID throwerUuid = ownerPlayer == null ? null : ownerPlayer.getUUID();
+                            UUID qualifiedRescuerUuid = hamster.getFluteProgressState().getQualifiedRescuerUuid();
+                            boolean calmedByNormalRiff = FlutePerformanceManager.isAffectedByNormalRiff(creeper);
+                            AcornMusicDiscRewardPolicy.Outcome rewardOutcome;
+
+                            synchronized (hamster.getFluteProgressState()) {
+                                rewardOutcome = AcornMusicDiscRewardPolicy.evaluate(
+                                        true,
+                                        creeper.isPowered(),
+                                        calmedByNormalRiff,
+                                        throwerUuid,
+                                        qualifiedRescuerUuid,
+                                        hamster.getFluteProgressState().hasAvailableRewardFor(throwerUuid));
+                                if (rewardOutcome == AcornMusicDiscRewardPolicy.Outcome.ACORN_DISC
+                                        && !hamster.getFluteProgressState().consumeReward(throwerUuid)) {
+                                    // Preserve ordinary charged-creeper drop if consumption loses race
+                                    rewardOutcome = AcornMusicDiscRewardPolicy.Outcome.CHEESE_DISC;
+                                }
+                            }
+
+                            if (rewardOutcome == AcornMusicDiscRewardPolicy.Outcome.ACORN_DISC) {
+                                Containers.dropItemStack(
+                                        this.level(),
+                                        creeper.getX(),
+                                        creeper.getY(),
+                                        creeper.getZ(),
+                                        new ItemStack(ModItems.MUSIC_DISC_ACORN.get()));
+                                if (ownerPlayer instanceof ServerPlayer thrower) {
+                                    ModCriteria.ACORN_MUSIC_DISC.get().trigger(thrower);
+                                }
+                            } else if (rewardOutcome == AcornMusicDiscRewardPolicy.Outcome.CHEESE_DISC) {
+                                Containers.dropItemStack(
+                                        this.level(),
+                                        creeper.getX(),
+                                        creeper.getY(),
+                                        creeper.getZ(),
+                                        new ItemStack(ModItems.MUSIC_DISC_CHEESE.get()));
+                            }
+                        }
+
+                        // Apply damage
+                        livingHit.addEffect(new MobEffectInstance(MobEffects.NAUSEA, 20, 0, false, false, false));
+
+                        // Calculate knockback direction based on velocity
+                        Vec3 currentVel = this.getDeltaMovement();
+                        double knockbackStrength = 0.5;
+
+                        // Apply knockback
+                        net.dawson.adorablehamsterpets.util.HamsterPhysicsUtil.applyKnockback(livingHit, knockbackStrength, -currentVel.x, -currentVel.z);
+                        playEffects = true;
+                    }
+                } else {
+                    playEffects = true;
+                    impactSound = ModSounds.getDynamicEntitySound(hitEntity, false, damageSource);
+                }
+
+                if (playEffects) {
+                    // Temporarily give unspawned hamster the projectile's position so SFX works
+                    hamster.setPos(this.position());
+                    // Feedback
+                    HamsterPhysicsUtil.broadcastImpactSound(hamster, impactSound, 1.0f);
+                    HamsterPhysicsUtil.broadcastImpactSound(hamster, ModSounds.HAMSTER_IMPACT.get(), 1.0f);
+                    ParticleEffectsUtil.sendParticles(this.level(), new Vec3(this.getX(), this.getY() + this.getBbHeight() / 2.0, this.getZ()), ParticleTypes.POOF, 50, new Vec3(0.4, 0.4, 0.4), 0.1);
+                }
+
+                Vec3 impactPos = this.position();
+
+                // Pass null for face & state since impacting an entity
+                HamsterPhysicsUtil.finalizeImpact(hamster, this.getDeltaMovement(), impactPos, null, null);
+            }
+        }
+        this.discard();
+    }
+
+    @Override
+    protected void onHitBlock(BlockHitResult blockHitResult) {
+        super.onHitBlock(blockHitResult);
+        if (this.level().isClientSide()) return;
+
+        CompoundTag hamsterNbt = this.getHamsterData();
+        Player ownerPlayer = this.getOwner() instanceof Player p ? p : null;
+
+        if (!hamsterNbt.isEmpty()) {
+            HamsterEntity hamster = HamsterNbtUtil.createFromNbt((ServerLevel) this.level(), ownerPlayer, hamsterNbt);
+            if (hamster != null) {
+                BlockPos hitPos = blockHitResult.getBlockPos();
+                BlockState hitState = this.level().getBlockState(hitPos);
+
+                if (TreeHeistUtil.isValidHeistStartBlock(hitState)) {
+                    // 1. Scan first to identify the tree anchor
+                    TreeHeistUtil.TreeScanResult scanResult = TreeHeistUtil.scanForTree(this.level(), hitPos);
+
+                    // 2. Check occupancy
+                    if (HamsterTreeSearcherEntity.isBlockOccupied(this.level(), scanResult.treeId())) {
+                        // Tree is busy
+                        if (ownerPlayer != null) {
+                            ownerPlayer.sendOverlayMessage(Component.translatable("message.adorablehamsterpets.tree_heist_occupied").withStyle(ChatFormatting.RED));
+                        }
+                        fallbackBlockHit(blockHitResult, hamster);
+                    } else {
+                        // Tree is free. Start Heist
+                        hamster.triggerLeafPopEffects(hitPos, true);
+                        HamsterTreeSearcherEntity searcher = ModEntities.HAMSTER_TREE_SEARCHER.get().create(this.level(), net.minecraft.world.entity.EntitySpawnReason.LOAD);
+                        if (searcher != null) {
+                            CompoundTag fullNbt = new CompoundTag();
+                            net.dawson.adorablehamsterpets.util.NbtCompat.saveEntity(hamster, fullNbt); // Use writeNbt to capture full entity state (Owner, Attributes, etc.)
+                            // Pass already-calculated scan result
+                            searcher.initializeSearch(hitPos, scanResult, fullNbt);
+                            this.level().addFreshEntity(searcher);
+                        }
+                    }
+                } else {
+                    fallbackBlockHit(blockHitResult, hamster);
+                }
+            }
+        }
+        this.discard();
+    }
+
+    /* ──────────────────────────────────────────────────────────────────────────────
+     *        Private Helpers
+     * ────────────────────────────────────────────────────────────────────────────*/
+
+    private void fallbackBlockHit(BlockHitResult blockHitResult, HamsterEntity hamster) {
+        // --- Standard Block Collision Handling ---
+        Vec3 impactPos = this.position();
+        BlockState hitState = this.level().getBlockState(blockHitResult.getBlockPos());
+
+        // Temporarily position so SFX works
+        hamster.setPos(impactPos);
+
+        // Feedback
+        SoundEvent impactSound = ModSounds.getDynamicBlockSound(hitState);
+        HamsterPhysicsUtil.broadcastImpactSound(hamster, impactSound, 1.2f); // Dynamic block sound based on surface
+        HamsterPhysicsUtil.broadcastImpactSound(hamster, SoundEvents.GENERIC_SMALL_FALL, 1.2f); // Armor sound if applicable
+
+        HamsterPhysicsUtil.finalizeImpact(hamster, this.getDeltaMovement(), impactPos, blockHitResult.getDirection(), hitState);
+    }
+}

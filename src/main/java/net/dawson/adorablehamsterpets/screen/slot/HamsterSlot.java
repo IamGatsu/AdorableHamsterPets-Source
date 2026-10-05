@@ -1,0 +1,24 @@
+package net.dawson.adorablehamsterpets.screen.slot;
+
+import net.dawson.adorablehamsterpets.util.HamsterInventoryUtil;
+import net.minecraft.world.Container;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.inventory.Slot;
+
+public class HamsterSlot extends Slot {
+
+    public HamsterSlot(Container inventory, int index, int x, int y) {
+        super(inventory, index, x, y);
+    }
+
+    /**
+     * Checks if the given ItemStack can be inserted into this slot.
+     * Uses centralized inventory utility logic.
+     * @param stack The ItemStack to check.
+     * @return True if the item is allowed, false otherwise.
+     */
+    @Override
+    public boolean mayPlace(ItemStack stack) {
+        return HamsterInventoryUtil.isValidForSlot(this.getContainerSlot(), stack);
+    }
+}

@@ -1,0 +1,624 @@
+package net.dawson.adorablehamsterpets.config;
+
+import net.dawson.adorablehamsterpets.AdorableHamsterPets;
+import net.dawson.adorablehamsterpets.entity.custom.genetics.HamsterColorZone;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.client.Minecraft;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.monster.Enemy;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.core.registries.Registries;
+import net.minecraft.core.Holder;
+import net.minecraft.tags.TagKey;
+import net.minecraft.network.chat.Component;
+import net.minecraft.resources.Identifier;
+import net.minecraft.util.RandomSource;
+import net.minecraft.world.level.biome.Biome;
+
+import java.util.*;
+
+/**
+ * A static cache for data parsed from the mod's configuration files.
+ * <p>
+ * This class loads user-defined lists of items and biomes from AhpMainConfig.java
+ * into high-performance {@code Set} collections on startup. It provides static
+ * checker methods (e.g., {@code isStandardFood()}, {@code isBlueBiome()}) for fast,
+ * O(1) lookups during gameplay, avoiding repeated config parsing.
+ */
+public class ConfigDataCache {
+
+    // Inner record for spawning
+    public record EnvironmentDefinition(
+            Set<Identifier> biomes,
+            Set<TagKey<Biome>> tags,
+            Set<Identifier> excludedBiomes,
+            Set<TagKey<Biome>> excludedTags,
+            Map<HamsterColorZone, Integer> weights
+    ) {}
+
+    // --- Cached Sets for Item Performance ---
+    private static final Set<Item> tamingItems = new HashSet<>();
+    private static final Set<TagKey<Item>> tamingTags = new HashSet<>();
+    private static final Set<Item> standardFoodItems = new HashSet<>();
+    private static final Set<TagKey<Item>> standardFoodTags = new HashSet<>();
+    private static final Set<Item> stealableItems = new HashSet<>();
+    private static final Set<TagKey<Item>> stealableTags = new HashSet<>();
+    private static final Set<Item> retrievableItems = new HashSet<>();
+    private static final Set<TagKey<Item>> retrievableItemTags = new HashSet<>();
+    private static final Set<Item> buffFoodItems = new HashSet<>();
+    private static final Set<TagKey<Item>> buffFoodTags = new HashSet<>();
+    private static final Set<Item> lureItems = new HashSet<>();
+    private static final Set<TagKey<Item>> lureItemTags = new HashSet<>();
+    private static final Set<Item> bedAvoidanceFoodItems = new HashSet<>();
+    private static final Set<TagKey<Item>> bedAvoidanceFoodTags = new HashSet<>();
+    private static final Set<Item> pouchUnlockItems = new HashSet<>();
+    private static final Set<TagKey<Item>> pouchUnlockTags = new HashSet<>();
+    private static final Set<Item> repeatableFoodItems = new HashSet<>();
+    private static final Set<TagKey<Item>> repeatableFoodTags = new HashSet<>();
+    private static final Set<Item> pouchAllowedItems = new HashSet<>();
+    private static final Set<Item> autoHealFoodItems = new HashSet<>();
+    private static final Set<TagKey<Item>> autoHealFoodTags = new HashSet<>();
+    private static final Set<TagKey<Item>> pouchAllowedTags = new HashSet<>();
+    private static final Set<Item> pouchDisallowedItems = new HashSet<>();
+    private static final Set<TagKey<Item>> pouchDisallowedTags = new HashSet<>();
+    private static final Set<Item> resurrectionTributeItems = new HashSet<>();
+    private static final Set<TagKey<Item>> resurrectionTributeTags = new HashSet<>();
+    private static final Set<Item> becomePacifistItems = new HashSet<>();
+    private static final Set<TagKey<Item>> becomePacifistTags = new HashSet<>();
+    private static final Set<Item> becomeNeutralItems = new HashSet<>();
+    private static final Set<TagKey<Item>> becomeNeutralTags = new HashSet<>();
+    private static final Set<Item> becomeMenaceItems = new HashSet<>();
+    private static final Set<TagKey<Item>> becomeMenaceTags = new HashSet<>();
+    private static final Set<Item> snackableItemsList = new HashSet<>();
+    private static final Set<TagKey<Item>> snackableItemsTags = new HashSet<>();
+    private static final Set<Item> snackableItemsBlacklistList = new HashSet<>();
+    private static final Set<TagKey<Item>> snackableItemsBlacklistTags = new HashSet<>();
+
+    // --- Cached Sets for Entity Performance ---
+    private static final Set<EntityType<?>> menaceTargetEntities = new HashSet<>();
+    private static final Set<TagKey<EntityType<?>>> menaceTargetTags = new HashSet<>();
+
+    // --- Cached Sets for Block Performance ---
+    private static final Set<Block> celebrationOreBlocks = new HashSet<>();
+    private static final Set<TagKey<Block>> celebrationOreTags = new HashSet<>();
+    private static final Set<Block> sulkingOreBlocks = new HashSet<>();
+    private static final Set<TagKey<Block>> sulkingOreTags = new HashSet<>();
+    private static final Set<Block> heistableLeavesBlocks = new HashSet<>();
+    private static final Set<TagKey<Block>> heistableLeavesTags = new HashSet<>();
+    private static final Set<Block> heistableLogsBlocks = new HashSet<>();
+    private static final Set<TagKey<Block>> heistableLogsTags = new HashSet<>();
+    private static final Set<Block> snackableCropBlocks = new HashSet<>();
+    private static final Set<TagKey<Block>> snackableCropTags = new HashSet<>();
+    private static final Set<Block> snackableCropBlacklistBlocks = new HashSet<>();
+    private static final Set<TagKey<Block>> snackableCropBlacklistTags = new HashSet<>();
+    private static final Set<Block> hideAndSeekBlocks = new HashSet<>();
+    private static final Set<TagKey<Block>> hideAndSeekTags = new HashSet<>();
+    private static final Set<Block> hideAndSeekBlacklistBlocks = new HashSet<>();
+    private static final Set<TagKey<Block>> hideAndSeekBlacklistTags = new HashSet<>();
+
+    // --- Cached Lists for Environment-Spawning Performance ---
+    private static final List<EnvironmentDefinition> ENVIRONMENTS = new ArrayList<>();
+    private static Map<HamsterColorZone, Integer> CAVE_WEIGHTS = new EnumMap<>(HamsterColorZone.class);
+    private static Map<HamsterColorZone, Integer> FALLBACK_WEIGHTS = new EnumMap<>(HamsterColorZone.class);
+    private static final Set<HamsterColorZone> allowedWildOverlayZones = new HashSet<>();
+    private static final Set<HamsterColorZone> restrictedBaseZones = new HashSet<>();
+    private static final Set<HamsterColorZone> clashingOverlayZones = new HashSet<>();
+
+    public static Set<HamsterColorZone> getAllowedWildOverlayZones() { return allowedWildOverlayZones; }
+    public static Set<HamsterColorZone> getRestrictedBaseZones() { return restrictedBaseZones; }
+    public static Set<HamsterColorZone> getClashingOverlayZones() { return clashingOverlayZones; }
+
+    // --- Cached Lists for Loot Generation ---
+    // Tags are expanded into individual items for generation logic
+    private static final List<Item> flattenedDefaultCheekLoot = new ArrayList<>();
+    private static final List<Item> flattenedExtraCheekLoot = new ArrayList<>();
+    private static final List<Item> flattenedCaveCheekLoot = new ArrayList<>();
+    private static final List<Item> flattenedCustomMiniGameRewards = new ArrayList<>();
+
+    /**
+     * Parses all item and biome tag lists from the config file.
+     * This should be called once on startup and on config reload.
+     */
+    public static void parseConfig() {
+        clearAllItemSets();
+        clearAllEntitySets();
+        clearAllBlockSets();
+
+        // --- Parse Item Lists ---
+        parseItemList(Configs.AHP_ITEMS.tamingFoods, tamingItems, tamingTags, "tamingFoods");
+        parseItemList(Configs.AHP_ITEMS.standardDiet, standardFoodItems, standardFoodTags, "standardDiet");
+        parseItemList(Configs.AHP_ITEMS.stealableItems, stealableItems, stealableTags, "stealableItems");
+        parseItemList(Configs.AHP_ITEMS.retrievableItems, retrievableItems, retrievableItemTags, "retrievableItems");
+        parseItemList(Configs.AHP_ITEMS.buffFoods, buffFoodItems, buffFoodTags, "buffFoods");
+        parseItemList(Configs.AHP_ITEMS.lureItems, lureItems, lureItemTags, "lureItems");
+        parseItemList(Configs.AHP_ITEMS.bedAvoidanceFoods, bedAvoidanceFoodItems, bedAvoidanceFoodTags, "bedAvoidanceFoods");
+        parseItemList(Configs.AHP_ITEMS.pouchUnlockFoods, pouchUnlockItems, pouchUnlockTags, "pouchUnlockFoods");
+        parseItemList(Configs.AHP_ITEMS.repeatableFoods, repeatableFoodItems, repeatableFoodTags, "repeatableFoods");
+        parseItemList(Configs.AHP_ITEMS.pouchAllowedItems, pouchAllowedItems, pouchAllowedTags, "pouchAllowedItems");
+        parseItemList(Configs.AHP_ITEMS.pouchDisallowedItems, pouchDisallowedItems, pouchDisallowedTags, "pouchDisallowedItems");
+        parseItemList(Configs.AHP_ITEMS.pouchDisallowedTags, pouchDisallowedItems, pouchDisallowedTags, "pouchDisallowedTags");
+        parseItemList(Configs.AHP_ITEMS.autoHealFoods, autoHealFoodItems, autoHealFoodTags, "autoHealFoods");
+        parseItemList(Configs.AHP_MAIN.resurrectionTributes, resurrectionTributeItems, resurrectionTributeTags, "resurrectionTributes");
+        parseLootGenerationList(Configs.AHP_WORLDGEN.defaultCheekLootList, flattenedDefaultCheekLoot, "defaultCheekLootList");
+        parseLootGenerationList(Configs.AHP_WORLDGEN.extraCheekLootList, flattenedExtraCheekLoot, "extraCheekLootList");
+        parseLootGenerationList(Configs.AHP_WORLDGEN.caveCheekLootList, flattenedCaveCheekLoot, "caveCheekLootList");
+        parseLootGenerationList(Configs.AHP_MAIN.customMiniGameRewards, flattenedCustomMiniGameRewards, "customMiniGameRewards");
+        parseItemList(Configs.AHP_MAIN.becomePacifistItems, becomePacifistItems, becomePacifistTags, "becomePacifistItems");
+        parseItemList(Configs.AHP_MAIN.becomeNeutralItems, becomeNeutralItems, becomeNeutralTags, "becomeNeutralItems");
+        parseItemList(Configs.AHP_MAIN.becomeMenaceItems, becomeMenaceItems, becomeMenaceTags, "becomeMenaceItems");
+        parseItemList(Configs.AHP_ITEMS.snackableItems, snackableItemsList, snackableItemsTags, "snackableItems");
+        parseItemList(Configs.AHP_ITEMS.snackableItemsBlacklist, snackableItemsBlacklistList, snackableItemsBlacklistTags, "snackableItemsBlacklist");
+
+        // --- Parse Entity Lists ---
+        parseEntityList(Configs.AHP_MAIN.menaceTargetEntities, menaceTargetEntities, menaceTargetTags, "menaceTargetEntities");
+
+        // --- Parse Block Lists ---
+        parseBlockList(Configs.AHP_MAIN.celebrationOres, celebrationOreBlocks, celebrationOreTags, "celebrationOres");
+        parseBlockList(Configs.AHP_MAIN.sulkingOres, sulkingOreBlocks, sulkingOreTags, "sulkingOres");
+        parseBlockList(Configs.AHP_MAIN.heistableLeaves, heistableLeavesBlocks, heistableLeavesTags, "heistableLeaves");
+        parseBlockList(Configs.AHP_MAIN.heistableLogs, heistableLogsBlocks, heistableLogsTags, "heistableLogs");
+        parseBlockList(Configs.AHP_ITEMS.snackableCrops, snackableCropBlocks, snackableCropTags, "snackableCrops");
+        parseBlockList(Configs.AHP_ITEMS.snackableCropsBlacklist, snackableCropBlacklistBlocks, snackableCropBlacklistTags, "snackableCropsBlacklist");
+        parseBlockList(Configs.AHP_MAIN.validHidingBlocks, hideAndSeekBlocks, hideAndSeekTags, "validHidingBlocks");
+        parseBlockList(Configs.AHP_MAIN.inventoryHidingBlacklist, hideAndSeekBlacklistBlocks, hideAndSeekBlacklistTags, "inventoryHidingBlacklist");
+
+        // --- Parse Region-Based Color Filters ---
+        parseWorldGenConfig(Configs.AHP_WORLDGEN);
+
+        // --- Parse Wild Overlays ---
+        allowedWildOverlayZones.clear();
+        for (String zoneStr : Configs.AHP_WORLDGEN.allowedWildOverlayZones) {
+            try { allowedWildOverlayZones.add(HamsterColorZone.valueOf(zoneStr.trim().toUpperCase(Locale.ROOT))); }
+            catch (IllegalArgumentException e) { AdorableHamsterPets.LOGGER.warn("[ConfigDataCache] Invalid wild overlay zone '{}' in config.", zoneStr); }
+        }
+
+        restrictedBaseZones.clear();
+        for (String zoneStr : Configs.AHP_WORLDGEN.restrictedBaseZones) {
+            try { restrictedBaseZones.add(HamsterColorZone.valueOf(zoneStr.trim().toUpperCase(Locale.ROOT))); }
+            catch (IllegalArgumentException e) { AdorableHamsterPets.LOGGER.warn("[ConfigDataCache] Invalid restricted base zone '{}' in config.", zoneStr); }
+        }
+
+        clashingOverlayZones.clear();
+        for (String zoneStr : Configs.AHP_WORLDGEN.clashingOverlayZones) {
+            try { clashingOverlayZones.add(HamsterColorZone.valueOf(zoneStr.trim().toUpperCase(Locale.ROOT))); }
+            catch (IllegalArgumentException e) { AdorableHamsterPets.LOGGER.warn("[ConfigDataCache] Invalid clashing overlay zone '{}' in config.", zoneStr); }
+        }
+
+        AdorableHamsterPets.LOGGER.info("Parsed all config data into caches.");
+    }
+
+    // --- Public Item Checker Methods ---
+    /**
+     * Bundles all ingestible config lists into one check.
+     */
+    public static boolean isDietaryItem(ItemStack stack) {
+        return isStandardFood(stack)
+                || isBuffFood(stack)
+                || isPouchUnlockFood(stack)
+                || isTamingFood(stack)
+                || isPacifistItem(stack)
+                || isStandardAggressionItem(stack)
+                || isMenaceItem(stack);
+    }
+    public static boolean isTamingFood(ItemStack stack) { return matchesItem(stack, tamingItems, tamingTags); }
+    public static boolean isStandardFood(ItemStack stack) { return matchesItem(stack, standardFoodItems, standardFoodTags); }
+    public static boolean isStealableItem(ItemStack stack) { return matchesItem(stack, stealableItems, stealableTags); }
+    public static boolean isRetrievableItem(ItemStack stack) { return matchesItem(stack, retrievableItems, retrievableItemTags); }
+    public static boolean isBuffFood(ItemStack stack) { return matchesItem(stack, buffFoodItems, buffFoodTags); }
+    public static boolean isLureItem(ItemStack stack) { return matchesItem(stack, lureItems, lureItemTags); }
+    public static boolean isBedAvoidanceFood(ItemStack stack) {return matchesItem(stack, bedAvoidanceFoodItems, bedAvoidanceFoodTags);}
+    public static boolean isPouchUnlockFood(ItemStack stack) { return matchesItem(stack, pouchUnlockItems, pouchUnlockTags); }
+    public static boolean isRepeatableFood(ItemStack stack) { return matchesItem(stack, repeatableFoodItems, repeatableFoodTags); }
+    public static boolean isAutoHealFood(ItemStack stack) { return matchesItem(stack, autoHealFoodItems, autoHealFoodTags); }
+    public static boolean isPouchAllowed(ItemStack stack) { return matchesItem(stack, pouchAllowedItems, pouchAllowedTags); }
+    public static boolean isPouchDisallowed(ItemStack stack) { return matchesItem(stack, pouchDisallowedItems, pouchDisallowedTags); }
+    public static boolean isResurrectionTribute(ItemStack stack) { return matchesItem(stack, resurrectionTributeItems, resurrectionTributeTags); }
+    public static Item getRandomDefaultLootItem(RandomSource random) {if (flattenedDefaultCheekLoot.isEmpty()) return Items.AIR;return flattenedDefaultCheekLoot.get(random.nextInt(flattenedDefaultCheekLoot.size()));}
+    public static Item getRandomCustomLootItem(RandomSource random) {if (flattenedExtraCheekLoot.isEmpty()) return Items.AIR;return flattenedExtraCheekLoot.get(random.nextInt(flattenedExtraCheekLoot.size()));}
+    public static Item getRandomCaveLootItem(RandomSource random) {if (flattenedCaveCheekLoot.isEmpty()) return Items.AIR;return flattenedCaveCheekLoot.get(random.nextInt(flattenedCaveCheekLoot.size()));}
+    public static Item getRandomCustomMiniGameReward(RandomSource random) {if (flattenedCustomMiniGameRewards.isEmpty()) return Items.AIR;return flattenedCustomMiniGameRewards.get(random.nextInt(flattenedCustomMiniGameRewards.size()));}
+    public static boolean isPacifistItem(ItemStack stack) { return matchesItem(stack, becomePacifistItems, becomePacifistTags); }
+    public static boolean isStandardAggressionItem(ItemStack stack) { return matchesItem(stack, becomeNeutralItems, becomeNeutralTags); }
+    public static boolean isMenaceItem(ItemStack stack) { return matchesItem(stack, becomeMenaceItems, becomeMenaceTags); }
+    public static boolean isSnackableItem(ItemStack stack) {
+        if (matchesItem(stack, snackableItemsBlacklistList, snackableItemsBlacklistTags)) return false;
+        return matchesItem(stack, snackableItemsList, snackableItemsTags);
+    }
+
+
+    // --- Public Entity Checker Methods ---
+    public static boolean isMenaceTarget(LivingEntity entity) {
+        if (entity == null) return false;
+        EntityType<?> type = entity.getType();
+
+        if (menaceTargetEntities.contains(type)) return true;
+        for (TagKey<EntityType<?>> tag : menaceTargetTags) {
+            if (type.builtInRegistryHolder().is(tag)) return true;
+        }
+
+        // Smart fallback: If user included custom AHP monster tag,
+        // fall back to the Enemy interface to ensure all hostiles are caught
+        if (Configs.AHP_MAIN.menaceTargetEntities.contains("#adorablehamsterpets:monsters")) {
+            if (entity instanceof Enemy) return true;
+        }
+        return false;
+    }
+
+    // --- Public Block Checker Methods ---
+    public static boolean isCelebrationOre(BlockState state) { return matchesBlock(state, celebrationOreBlocks, celebrationOreTags); }
+    public static boolean isSulkingOre(BlockState state) { return matchesBlock(state, sulkingOreBlocks, sulkingOreTags); }
+    public static boolean isHeistableLeaf(BlockState state) { return matchesBlock(state, heistableLeavesBlocks, heistableLeavesTags); }
+    public static boolean isHeistableLog(BlockState state) { return matchesBlock(state, heistableLogsBlocks, heistableLogsTags); }
+    public static boolean isSnackableCrop(BlockState state) {
+        if (matchesBlock(state, snackableCropBlacklistBlocks, snackableCropBlacklistTags)) return false;
+        return matchesBlock(state, snackableCropBlocks, snackableCropTags);
+    }
+    public static boolean isHideAndSeekBlock(BlockState state) {return matchesBlock(state, hideAndSeekBlocks, hideAndSeekTags);}
+    public static boolean isHideAndSeekBlacklisted(BlockState state) {return matchesBlock(state, hideAndSeekBlacklistBlocks, hideAndSeekBlacklistTags);}
+
+    // --- Public Environment Checker Methods ---
+    /**
+     * Parses region-based color filters and weights from the supplied worldgen config.
+     */
+    public static void parseWorldGenConfig(AhpWorldGenConfig wgc) {
+        ENVIRONMENTS.clear();
+
+        ENVIRONMENTS.add(parseEnvironment(wgc.wildcardBiomes, wgc.wildcardTags, wgc.wildcardExclusionBiomes, wgc.wildcardExclusionTags, wgc.wildcardWeights, "Wildcard"));
+        ENVIRONMENTS.add(parseEnvironment(wgc.icyBiomes, wgc.icyTags, wgc.icyExclusionBiomes, wgc.icyExclusionTags, wgc.icyWeights, "Icy"));
+        ENVIRONMENTS.add(parseEnvironment(wgc.magicalBiomes, wgc.magicalTags, wgc.magicalExclusionBiomes, wgc.magicalExclusionTags, wgc.magicalWeights, "Magical"));
+        ENVIRONMENTS.add(parseEnvironment(wgc.cherryBiomes, wgc.cherryTags, wgc.cherryExclusionBiomes, wgc.cherryExclusionTags, wgc.cherryWeights, "Cherry"));
+        ENVIRONMENTS.add(parseEnvironment(wgc.snowyBiomes, wgc.snowyTags, wgc.snowyExclusionBiomes, wgc.snowyExclusionTags, wgc.snowyWeights, "Snowy"));
+        ENVIRONMENTS.add(parseEnvironment(wgc.skyBiomes, wgc.skyTags, wgc.skyExclusionBiomes, wgc.skyExclusionTags, wgc.skyWeights, "Sky"));
+        ENVIRONMENTS.add(parseEnvironment(wgc.rockyBiomes, wgc.rockyTags, wgc.rockyExclusionBiomes, wgc.rockyExclusionTags, wgc.rockyWeights, "Rocky"));
+        ENVIRONMENTS.add(parseEnvironment(wgc.darkBiomes, wgc.darkTags, wgc.darkExclusionBiomes, wgc.darkExclusionTags, wgc.darkWeights, "Cave"));
+        ENVIRONMENTS.add(parseEnvironment(wgc.sandyBiomes, wgc.sandyTags, wgc.sandyExclusionBiomes, wgc.sandyExclusionTags, wgc.sandyWeights, "Sandy"));
+        ENVIRONMENTS.add(parseEnvironment(wgc.forestBiomes, wgc.forestTags, wgc.forestExclusionBiomes, wgc.forestExclusionTags, wgc.forestWeights, "Forested"));
+        ENVIRONMENTS.add(parseEnvironment(wgc.auburnBiomes, wgc.auburnTags, wgc.auburnExclusionBiomes, wgc.auburnExclusionTags, wgc.auburnWeights, "Auburn"));
+
+        // Cave spawning always uses cave colors, while plains provides ordinary fallback colors
+        CAVE_WEIGHTS = parseWeights(wgc.darkWeights, "Cave");
+        FALLBACK_WEIGHTS = parseWeights(wgc.plainsWeights, "Plains");
+    }
+
+    /**
+     * Determines which environment a biome belongs to and returns its configured zone weights.
+     */
+    public static Map<HamsterColorZone, Integer> getWeightsForBiome(Holder<Biome> biomeEntry) {
+        for (EnvironmentDefinition env : ENVIRONMENTS) {
+            if (matchesBiome(biomeEntry, env.biomes(), env.tags(), env.excludedBiomes(), env.excludedTags())) {
+                return env.weights();
+            }
+        }
+        return FALLBACK_WEIGHTS; // Fallback to Plains
+    }
+
+    public static Map<HamsterColorZone, Integer> getCaveWeights() {
+        return CAVE_WEIGHTS;
+    }
+
+    // --- Private Helper Methods ---
+    private static void parseItemList(List<String> configList, Set<Item> itemSet, Set<TagKey<Item>> tagSet, String listName) {
+        for (String entry : configList) {
+            if (entry.startsWith("#")) {
+                try {
+                    Identifier tagId = Identifier.parse(entry.substring(1));
+                    tagSet.add(TagKey.create(Registries.ITEM, tagId));
+                } catch (Exception e) {
+                    AdorableHamsterPets.LOGGER.warn("[ItemTagManager] Invalid item tag identifier in '{}' config list: '{}'", listName, entry);
+                }
+            } else {
+                try {
+                    Identifier itemId = Identifier.parse(entry);
+                    BuiltInRegistries.ITEM.getOptional(itemId).ifPresent(itemSet::add);
+                } catch (Exception e) {
+                    AdorableHamsterPets.LOGGER.warn("[ItemTagManager] Invalid item identifier in '{}' config list: '{}'", listName, entry);
+                }
+            }
+        }
+    }
+
+    /**
+     * Parses a config list into a flat list of Items for generation purposes.
+     * Tags (#) are resolved to all their contained items.
+     */
+    private static void parseLootGenerationList(List<String> configList, List<Item> targetList, String listName) {
+        for (String entry : configList) {
+            if (entry.startsWith("#")) {
+                try {
+                    Identifier tagId = Identifier.parse(entry.substring(1));
+                    TagKey<Item> tagKey = TagKey.create(Registries.ITEM, tagId);
+
+                    BuiltInRegistries.ITEM.get(tagKey).ifPresent(entries -> {
+                        for (var itemEntry : entries) {
+                            targetList.add(itemEntry.value());
+                        }
+                    });
+                } catch (Exception e) {
+                    AdorableHamsterPets.LOGGER.warn("[LootConfig] Invalid item tag in '{}': '{}'", listName, entry);
+                }
+            } else {
+                try {
+                    Identifier itemId = Identifier.parse(entry);
+                    BuiltInRegistries.ITEM.getOptional(itemId).ifPresent(targetList::add);
+                } catch (Exception e) {
+                    AdorableHamsterPets.LOGGER.warn("[LootConfig] Invalid item ID in '{}': '{}'", listName, entry);
+                }
+            }
+        }
+    }
+
+    private static void parseEntityList(List<String> configList, Set<EntityType<?>> entitySet, Set<TagKey<EntityType<?>>> tagSet, String listName) {
+        for (String entry : configList) {
+            if (entry.startsWith("#")) {
+                try {
+                    Identifier tagId = Identifier.parse(entry.substring(1));
+                    tagSet.add(TagKey.create(Registries.ENTITY_TYPE, tagId));
+                } catch (Exception e) {
+                    AdorableHamsterPets.LOGGER.warn("[EntityTagManager] Invalid entity tag identifier in '{}' config list: '{}'", listName, entry);
+                }
+            } else {
+                try {
+                    Identifier entityId = Identifier.parse(entry);
+                    BuiltInRegistries.ENTITY_TYPE.getOptional(entityId).ifPresent(entitySet::add);
+                } catch (Exception e) {
+                    AdorableHamsterPets.LOGGER.warn("[EntityTagManager] Invalid entity identifier in '{}' config list: '{}'", listName, entry);
+                }
+            }
+        }
+    }
+
+    private static void parseBlockList(List<String> configList, Set<Block> blockSet, Set<TagKey<Block>> tagSet, String listName) {
+        for (String entry : configList) {
+            if (entry.startsWith("#")) {
+                try {
+                    Identifier tagId = Identifier.parse(entry.substring(1));
+                    tagSet.add(TagKey.create(Registries.BLOCK, tagId));
+                } catch (Exception e) {
+                    AdorableHamsterPets.LOGGER.warn("[BlockTagManager] Invalid block tag identifier in '{}' config list: '{}'", listName, entry);
+                }
+            } else {
+                try {
+                    Identifier blockId = Identifier.parse(entry);
+                    BuiltInRegistries.BLOCK.getOptional(blockId).ifPresent(blockSet::add);
+                } catch (Exception e) {
+                    AdorableHamsterPets.LOGGER.warn("[BlockTagManager] Invalid block identifier in '{}' config list: '{}'", listName, entry);
+                }
+            }
+        }
+    }
+
+    private static EnvironmentDefinition parseEnvironment(List<String> biomes, List<String> tags, List<String> exBiomes, List<String> exTags, List<String> weightStrings, String name) {
+        Set<Identifier> bIds = new HashSet<>();
+        Set<TagKey<Biome>> bTags = new HashSet<>();
+        Set<Identifier> eIds = new HashSet<>();
+        Set<TagKey<Biome>> eTags = new HashSet<>();
+
+        parseBiomeIdList(biomes, bIds, name + " Biomes");
+        parseBiomeTagList(tags, bTags, name + " Tags");
+        parseBiomeIdList(exBiomes, eIds, name + " Exclusions");
+        parseBiomeTagList(exTags, eTags, name + " Exclusion Tags");
+
+        Map<HamsterColorZone, Integer> weights = parseWeights(weightStrings, name);
+        return new EnvironmentDefinition(bIds, bTags, eIds, eTags, weights);
+    }
+
+    private static Map<HamsterColorZone, Integer> parseWeights(List<String> weightStrings, String envName) {
+        Map<HamsterColorZone, Integer> weights = new EnumMap<>(HamsterColorZone.class);
+        for (String str : weightStrings) {
+            String[] parts = str.split(":");
+            if (parts.length == 2) {
+                try {
+                    HamsterColorZone zone = HamsterColorZone.valueOf(parts[0].trim().toUpperCase(Locale.ROOT));
+                    int weight = Integer.parseInt(parts[1].trim());
+                    if (weight > 0) weights.put(zone, weight);
+                } catch (IllegalArgumentException e) {
+                    AdorableHamsterPets.LOGGER.warn("[ConfigDataCache] Invalid weight zone '{}' in {}", str, envName);
+                }
+            }
+        }
+        if (weights.isEmpty()) weights.put(HamsterColorZone.ORANGE, 100); // Absolute safety fallback
+        return weights;
+    }
+
+    private static void parseBiomeIdList(List<String> configList, Set<Identifier> idSet, String listName) {
+        for (String entry : configList) {
+            try {
+                idSet.add(Identifier.parse(entry));
+            } catch (Exception e) {
+                AdorableHamsterPets.LOGGER.warn("[BiomeTagManager] Invalid biome identifier in '{}' config list: '{}'", listName, entry);
+            }
+        }
+    }
+
+    private static void parseBiomeTagList(List<String> configList, Set<TagKey<Biome>> tagSet, String listName) {
+        for (String entry : configList) {
+            String tagName = entry.startsWith("#") ? entry.substring(1) : entry;
+            try {
+                tagSet.add(TagKey.create(Registries.BIOME, Identifier.parse(tagName)));
+            } catch (Exception e) {
+                AdorableHamsterPets.LOGGER.warn("[BiomeTagManager] Invalid biome tag in '{}' config list: '{}'", listName, entry);
+            }
+        }
+    }
+
+    private static boolean matchesItem(ItemStack stack, Set<Item> itemSet, Set<TagKey<Item>> tagSet) {
+        if (stack.isEmpty()) return false;
+        if (itemSet.contains(stack.getItem())) return true;
+        for (TagKey<Item> tag : tagSet) {
+            if (stack.is(tag)) return true;
+        }
+        return false;
+    }
+
+    private static boolean matchesBlock(BlockState state, Set<Block> blockSet, Set<TagKey<Block>> tagSet) {
+        if (state == null) return false;
+        // Check exact block ID
+        if (blockSet.contains(state.getBlock())) return true;
+        // Check tags
+        for (TagKey<Block> tag : tagSet) {
+            if (state.is(tag)) return true;
+        }
+        return false;
+    }
+
+    private static boolean matchesBiome(Holder<Biome> biomeEntry, Set<Identifier> ids, Set<TagKey<Biome>> tags, Set<Identifier> exclusionIds, Set<TagKey<Biome>> exclusionTags) {
+        Identifier biomeId = biomeEntry.unwrapKey().map(ResourceKey::identifier).orElse(null);
+        if (biomeId == null) return false;
+
+        // --- Exclusion Check (Highest Priority) ---
+        if (exclusionIds.contains(biomeId)) return false;
+        for (TagKey<Biome> tag : exclusionTags) {
+            if (biomeEntry.is(tag)) return false;
+        }
+
+        // --- Inclusion Check ---
+        if (ids.contains(biomeId)) return true;
+        for (TagKey<Biome> tag : tags) {
+            if (biomeEntry.is(tag)) return true;
+        }
+
+        return false;
+    }
+
+    private static void clearAllItemSets() {
+        tamingItems.clear();
+        tamingTags.clear();
+        standardFoodItems.clear();
+        standardFoodTags.clear();
+        stealableItems.clear();
+        stealableTags.clear();
+        retrievableItems.clear();
+        retrievableItemTags.clear();
+        buffFoodItems.clear();
+        buffFoodTags.clear();
+        lureItems.clear();
+        lureItemTags.clear();
+        bedAvoidanceFoodItems.clear();
+        bedAvoidanceFoodTags.clear();
+        pouchUnlockItems.clear();
+        pouchUnlockTags.clear();
+        repeatableFoodItems.clear();
+        repeatableFoodTags.clear();
+        autoHealFoodItems.clear();
+        autoHealFoodTags.clear();
+        pouchAllowedItems.clear();
+        pouchAllowedTags.clear();
+        pouchDisallowedItems.clear();
+        pouchDisallowedTags.clear();
+        resurrectionTributeItems.clear();
+        resurrectionTributeTags.clear();
+        flattenedDefaultCheekLoot.clear();
+        flattenedExtraCheekLoot.clear();
+        flattenedCaveCheekLoot.clear();
+        flattenedCustomMiniGameRewards.clear();
+        becomePacifistItems.clear();
+        becomePacifistTags.clear();
+        becomeNeutralItems.clear();
+        becomeNeutralTags.clear();
+        becomeMenaceItems.clear();
+        becomeMenaceTags.clear();
+        snackableItemsList.clear();
+        snackableItemsTags.clear();
+        snackableItemsBlacklistList.clear();
+        snackableItemsBlacklistTags.clear();
+    }
+
+    private static void clearAllEntitySets() {
+        menaceTargetEntities.clear();
+        menaceTargetTags.clear();
+    }
+
+    private static void clearAllBlockSets() {
+        celebrationOreBlocks.clear();
+        celebrationOreTags.clear();
+        sulkingOreBlocks.clear();
+        sulkingOreTags.clear();
+        heistableLeavesBlocks.clear();
+        heistableLeavesTags.clear();
+        heistableLogsBlocks.clear();
+        heistableLogsTags.clear();
+        snackableCropBlocks.clear();
+        snackableCropTags.clear();
+        snackableCropBlacklistBlocks.clear();
+        snackableCropBlacklistTags.clear();
+        hideAndSeekBlocks.clear();
+        hideAndSeekTags.clear();
+        hideAndSeekBlacklistBlocks.clear();
+        hideAndSeekBlacklistTags.clear();
+    }
+
+    /**
+     * Retrieves the localized display name of the first item found in a string configuration list.
+     * <p>
+     * This is designed for dynamic tooltips that need to reference a specific item required for an action
+     * (e.g., "Right-click with [Item]"), ensuring the text adapts automatically if the user changes the config.
+     * If the first entry is a tag, it randomly selects an item from that tag to display.
+     *
+     * @param configList The list of strings (Item IDs or Tags) from the config.
+     * @return The formatted {@link Component} component of the item name. Returns the raw string if it is an
+     *         invalid ID. Returns "Air" if the list is empty.
+     */
+    public static Component getFirstItemNameFromList(List<String> configList) {
+        if (configList.isEmpty()) {
+            return Component.translatable("block.minecraft.air");
+        }
+
+        String firstEntry = configList.get(0);
+
+        // Check if entry starts with hash indicating tag
+        if (firstEntry.startsWith("#")) {
+            try {
+                Identifier tagId = Identifier.parse(firstEntry.substring(1));
+                TagKey<Item> tagKey = TagKey.create(Registries.ITEM, tagId);
+
+                // --- 1. Client-Side Tag Resolution ---
+                // Query active world's dynamic registry manager
+                Minecraft client = Minecraft.getInstance();
+                if (client != null && client.level != null) {
+                    var registry = client.level.registryAccess().lookupOrThrow(Registries.ITEM);
+                    var entryListOpt = registry.get(tagKey);
+
+                    if (entryListOpt.isPresent() && entryListOpt.get().size() > 0) {
+                        var entryList = entryListOpt.get();
+                        int randomIndex = (int) (Math.random() * entryList.size());
+                        Item randomItem = entryList.get(randomIndex).value();
+                        return randomItem.getName(new net.minecraft.world.item.ItemStack(randomItem));
+                    }
+                }
+
+                // --- 2. Server-Side / Fallback Resolution ---
+                var entryListOpt = BuiltInRegistries.ITEM.get(tagKey);
+                if (entryListOpt.isPresent() && entryListOpt.get().size() > 0) {
+                    var entryList = entryListOpt.get();
+                    int randomIndex = (int) (Math.random() * entryList.size());
+                    Item randomItem = entryList.get(randomIndex).value();
+                    return randomItem.getName(new net.minecraft.world.item.ItemStack(randomItem));
+                }
+            } catch (Exception e) {
+                // Fallback to raw string if tag invalid
+            }
+            return Component.literal(firstEntry);
+        } else {
+            try {
+                // Try to resolve item ID to localized name
+                Identifier itemId = Identifier.parse(firstEntry);
+                Item item = BuiltInRegistries.ITEM.getValue(itemId);
+
+                // Fallback to raw string if registry returns default air
+                if (item == Items.AIR && !firstEntry.equals("minecraft:air")) {
+                    return Component.literal(firstEntry);
+                }
+                return item.getName(new net.minecraft.world.item.ItemStack(item));
+            } catch (Exception e) {
+                // Fallback if ID malformed
+                return Component.literal(firstEntry);
+            }
+        }
+    }
+}

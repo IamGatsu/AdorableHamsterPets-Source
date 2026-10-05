@@ -1,0 +1,285 @@
+package net.dawson.adorablehamsterpets.util;
+
+import dev.architectury.networking.NetworkManager;
+import dev.architectury.platform.Platform;
+import net.dawson.adorablehamsterpets.AdorableHamsterPets;
+import net.dawson.adorablehamsterpets.accessor.PlayerEntityAccessor;
+import net.dawson.adorablehamsterpets.block.custom.WoodVariant;
+import net.dawson.adorablehamsterpets.networking.payload.PlayerKnockbackPayload;
+import net.dawson.adorablehamsterpets.particles.ModParticles;
+import net.dawson.adorablehamsterpets.tag.ModBlockTags;
+import net.minecraft.advancements.AdvancementHolder;
+import net.minecraft.advancements.AdvancementProgress;
+import net.minecraft.server.PlayerAdvancements;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.core.particles.BlockParticleOption;
+import net.minecraft.core.particles.ParticleOptions;
+import net.minecraft.core.particles.ParticleTypes;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.network.chat.MutableComponent;
+import net.minecraft.network.chat.Component;
+import net.minecraft.ChatFormatting;
+import net.minecraft.resources.Identifier;
+import net.minecraft.world.phys.Vec3;
+import org.jetbrains.annotations.Nullable;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
+
+/**
+ * A centralized utility for miscellaneous things that don't fit in other utilities.
+ */
+public final class MiscUtil {
+
+    /**
+     * Utility for determining if a block state represents a bush and selecting particles accordingly.
+     */
+    public static final class BlockStateUtil {
+
+        public static boolean isBushBlock(BlockState state) {
+            return state.is(ModBlockTags.BUSHES) || BuiltInRegistries.BLOCK.getKey(state.getBlock()).getPath().toLowerCase(Locale.ROOT).contains("bush");
+        }
+
+        public static ParticleOptions getHidingSpotParticle(BlockState state) {
+            if (isBushBlock(state)) {
+                return ModParticles.getForVariant(WoodVariant.BAMBOO); // Green leaves for bushes
+            } else {
+                return new BlockParticleOption(ParticleTypes.BLOCK, state);
+            }
+        }
+    }
+
+    /**
+     * Utility for handling player-specific physics interactions and forced client synchronization.
+     */
+    public static final class PlayerPhysicsUtil {
+
+        public static final double KNOCKBACK_HORIZONTAL = 0.3;
+        public static final double KNOCKBACK_VERTICAL = 0.4;
+
+        private PlayerPhysicsUtil() {}
+
+        /**
+         * Applies reliable knockback to a player and forces the server to sync the velocity
+         * to the client, overriding client-side movement prediction.
+         *
+         * @param player    The player to knock back.
+         * @param sourcePos The origin position of the knockback.
+         */
+        public static void applyKnockback(ServerPlayer player, Vec3 sourcePos) {
+            // 1. Calculate direction away from source
+            Vec3 knockbackDir = player.position().subtract(sourcePos).normalize();
+
+            double velX = knockbackDir.x * KNOCKBACK_HORIZONTAL;
+            double velY = KNOCKBACK_VERTICAL;
+            double velZ = knockbackDir.z * KNOCKBACK_HORIZONTAL;
+
+            // 2. Apply velocity on server
+            player.setDeltaMovement(velX, velY, velZ);
+
+            // 3. Mark velocity as dirty
+            player.hurtMarked = true;
+
+            // 4. Force sync with client using packet
+            NetworkManager.sendToPlayer(player, new PlayerKnockbackPayload(velX, velY, velZ));
+        }
+    }
+
+    /**
+     * Utility for managing dynamic or randomized messages sent to players.
+     */
+    public final class MessagingUtil {
+
+        private MessagingUtil() {}
+
+        /**
+         * Selects and sends a randomized sequential message to the player, ensuring it doesn't repeat the
+         * last message shown. Optionally handles "first-time" experience logic via a specific advancement.
+         *
+         * @param player           The player receiving the message.
+         * @param advancementId    The ID of the "first time" advancement. If null, first-time logic is skipped.
+         * @param messageBaseKey   The translation base key (e.g., "message.mymod.some_event"). Will append ".1", ".2", etc.
+         * @param messageCount     The total number of available localized messages in the pool.
+         * @param memoryContextKey The NBT dictionary key used to remember the last message shown for this specific event.
+         */
+        public static void sendRandomizedSequentialMessage(ServerPlayer player, @Nullable Identifier advancementId, String messageBaseKey, int messageCount, String memoryContextKey) {
+            PlayerAdvancements tracker = player.getAdvancements();
+            int messageIndex;
+
+            if (advancementId != null) {
+                AdvancementHolder advancement = player.level().getServer().getAdvancements().get(advancementId);
+
+                if (advancement == null) {
+                    AdorableHamsterPets.LOGGER.error("[MessagingUtil] CRITICAL: Could not find advancement '{}'. Message will not be sent.", advancementId);
+                    return;
+                }
+
+                AdvancementProgress progress = tracker.getOrStartProgress(advancement);
+
+                if (!progress.isDone()) {
+                    // First time ever for this player
+                    messageIndex = 0;
+                    // Grant advancement so this block doesn't run again
+                    for (String criterion : advancement.value().criteria().keySet()) {
+                        tracker.award(advancement, criterion);
+                    }
+                } else {
+                    messageIndex = getNextRandomMessageIndex(player, messageCount, memoryContextKey);
+                }
+            } else {
+                // No first-time logic required, grab random message
+                messageIndex = getNextRandomMessageIndex(player, messageCount, memoryContextKey);
+            }
+
+            // Save new index and send message
+            ((PlayerEntityAccessor) player).ahp$setLastRandomMessageIndex(memoryContextKey, messageIndex);
+            String messageKey = messageBaseKey + "." + (messageIndex + 1);
+            player.sendSystemMessage(Component.translatable(messageKey).withStyle(ChatFormatting.WHITE), true);
+        }
+
+        private static int getNextRandomMessageIndex(ServerPlayer player, int messageCount, String memoryContextKey) {
+            PlayerEntityAccessor accessor = (PlayerEntityAccessor) player;
+            int lastIndex = accessor.ahp$getLastRandomMessageIndex(memoryContextKey);
+
+            List<Integer> possibleIndices = IntStream.range(0, messageCount).boxed().collect(Collectors.toList());
+            if (lastIndex >= 0 && lastIndex < messageCount) {
+                possibleIndices.remove(Integer.valueOf(lastIndex));
+            }
+
+            return possibleIndices.get(player.level().getRandom().nextInt(possibleIndices.size()));
+        }
+    }
+
+    private MiscUtil() {}
+
+    /**
+     * Converts a raw ID into a human-readable format.
+     * Example: "cheesecake_mocha" -> "Cheesecake Mocha"
+     *
+     * @param id The raw string ID to format.
+     * @return A capitalized, space-separated human-readable string.
+     */
+    public static String formatHumanReadableName(String id) {
+        if (id == null || id.isEmpty()) return "";
+        String[] words = id.split("_");
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < words.length; i++) {
+            String word = words[i];
+            if (!word.isEmpty()) {
+                sb.append(Character.toUpperCase(word.charAt(0)));
+                if (word.length() > 1) {
+                    sb.append(word.substring(1).toLowerCase(Locale.ROOT));
+                }
+            }
+            if (i < words.length - 1) sb.append(" ");
+        }
+        return sb.toString();
+    }
+
+    /**
+     * Utility for checking mod compatibility and specific versions.
+     */
+    public static final class ModCompatUtil {
+
+        // Cache result
+        private static final boolean HAS_PUNCHY_VERSION = checkPunchyVersion();
+
+        private ModCompatUtil() {}
+
+        /**
+         * Checks if the Punchy mod is installed and is at least version 2.6.0.
+         */
+        public static boolean hasRequiredPunchyVersion() {
+            return HAS_PUNCHY_VERSION;
+        }
+
+        private static boolean checkPunchyVersion() {
+            if (!Platform.isModLoaded("punchy")) {
+                return false;
+            }
+            try {
+                String versionStr = Platform.getMod("punchy").getVersion();
+                // Split version string by standard delimiters to extract semantic digits
+                String[] parts = versionStr.split("[.\\-+]");
+                int major = Integer.parseInt(parts[0]);
+                int minor = parts.length > 1 ? Integer.parseInt(parts[1]) : 0;
+                int patch = parts.length > 2 ? Integer.parseInt(parts[2]) : 0;
+
+                if (major > 2) return true;
+                if (major == 2 && minor > 6) return true;
+                return major == 2 && minor == 6 && patch >= 0;
+            } catch (Exception e) {
+                AdorableHamsterPets.LOGGER.warn("Failed to parse Punchy version", e);
+                return false;
+            }
+        }
+    }
+
+    /**
+     * Utility for converting game ticks into human-readable time formats
+     * (Days, Months, Years) for either in-game time or real-life time.
+     */
+    public final class TimeConversionUtil {
+
+        // Real-Life Time: 1 second = 20 ticks. 1 Day = 86400 seconds = 1,728,000 ticks.
+        private static final long TICKS_PER_IRL_DAY = 1_728_000L;
+
+        // Minecraft Time: 1 Day = 20 minutes = 24,000 ticks.
+        private static final long TICKS_PER_MC_DAY = 24_000L;
+
+        private static final long DAYS_PER_MONTH = 30L;
+        private static final long DAYS_PER_YEAR = 365L;
+
+        private TimeConversionUtil() {
+        }
+
+        /**
+         * Converts a tick duration into a localized "X Years, Y Months, Z Days" format.
+         * Zero-values are hidden to keep the string concise.
+         */
+        public static Component formatAge(long ageInTicks) {
+            long ticksPerMonth = TICKS_PER_MC_DAY * DAYS_PER_MONTH;
+            long ticksPerYear = TICKS_PER_MC_DAY * DAYS_PER_YEAR;
+
+            long years = ageInTicks / ticksPerYear;
+            long remainder = ageInTicks % ticksPerYear;
+
+            long months = remainder / ticksPerMonth;
+            remainder = remainder % ticksPerMonth;
+
+            long days = remainder / TICKS_PER_MC_DAY;
+
+            List<Component> parts = new ArrayList<>();
+
+            if (years > 0) {
+                String key = years == 1 ? "time.adorablehamsterpets.year" : "time.adorablehamsterpets.years";
+                parts.add(Component.translatable(key, years));
+            }
+
+            if (months > 0) {
+                String key = months == 1 ? "time.adorablehamsterpets.month" : "time.adorablehamsterpets.months";
+                parts.add(Component.translatable(key, months));
+            }
+
+            // Always display days if under a month old, or if there is a remainder of days.
+            if (days > 0 || (years == 0 && months == 0)) {
+                String key = days == 1 ? "time.adorablehamsterpets.day" : "time.adorablehamsterpets.days";
+                parts.add(Component.translatable(key, days));
+            }
+
+            MutableComponent result = Component.empty();
+            for (int i = 0; i < parts.size(); i++) {
+                result.append(parts.get(i));
+                if (i < parts.size() - 1) {
+                    result.append(Component.literal(", "));
+                }
+            }
+
+            return result;
+        }
+    }
+}
